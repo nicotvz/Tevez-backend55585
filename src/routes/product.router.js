@@ -1,88 +1,194 @@
 import { Router } from "express";
-import ProductManager from "../ProductManager.js";
 import { uploader } from "../utils.js";
 
+// import ProductManager from "../dao/fileManagers/ProductManager.js";
+import ProductManager from "../dao/dbManagers/productManager.js";
+
+const productManager = new ProductManager();
 const router = Router();
-const manager = new ProductManager();
+
+/////////////////////////
+///////GET METHODS///////
+/////////////////////////
 
 router.get("/", async (req, res) => {
-  const { limit } = req.query;
+  try {
+    const {
+      limit = 10,
+      page = 1,
+      category = null,
+      available = null,
+      sort = null,
+    } = req.query;
 
-  const products = await manager.getProducts();
+    const products = await productManager.getProducts(
+      page,
+      limit,
+      category,
+      available,
+      sort
+    );
 
-  if (!limit) {
-    return res.send({ products: products });
+    if (!products)
+      return res.status(404).send({
+        status: "error",
+        error: `No products found`,
+      });
+
+    if (isNaN(limit)) {
+      return res.status(400).send({
+        status: "error",
+        error: `Limit ${limit} is not a valid value`,
+      });
+    }
+
+    if (isNaN(page)) {
+      return res.status(400).send({
+        status: "error",
+        error: `Page ${page} is not a valid value`,
+      });
+    }
+
+    if (isNaN(sort) && sort !== null) {
+      return res.status(400).send({
+        status: "error",
+        error: `Sort value ${sort} is not a valid value`,
+      });
+    }
+
+    res.status(200).send({
+      status: "success",
+      payload: products,
+    });
+  } catch (error) {
+    console.log(`Cannot get products with mongoose ${error}`);
   }
-
-  const limitedProducts = products.slice(0, limit);
-
-  return res.send({ products: limitedProducts });
 });
 
 router.get("/:pid", async (req, res) => {
-  const productId = req.params.pid;
-  const product = await manager.getProductById(+productId);
+  try {
+    const pid = req.params.pid;
+    const filteredProduct = await productManager.getProductById(pid);
 
-  if (!product) {
-    return res
-      .status(404)
-      .send({ status: "Error", error: "product was not found" });
+    if (!filteredProduct || filteredProduct == 0)
+      return res.status(404).send({
+        status: "error",
+        error: `Product with ID ${pid} was not found`,
+      });
+
+    return res.status(200).send({
+      status: "success",
+      payload: filteredProduct,
+    });
+  } catch (error) {
+    console.log(`Cannot get product with mongoose ${error}`);
   }
-  return res.send({ status: "OK", message: product });
 });
 
-router.post("/", uploader.array("thumbnails", 5), async (req, res) => {
-  const product = req.body;
-  const files = req.files;
+/////////////////////////
+///////POST METHOD///////
+/////////////////////////
 
-  if (!product) {
-    return res.status(400).send({
-      status: "Error",
-      error: "Error, the product could not be added",
-    });
+router.post("/", uploader.array("thumbnails"), async (req, res) => {
+  try {
+    let { title, description, code, price, stock, category, thumbnails } =
+      req.body;
+
+    if (req.files) thumbnails = req.files;
+
+    if (!req.files && !thumbnails) {
+      return res.status(400).send({
+        status: "error",
+        error: `Thumbnails could not be saved`,
+      });
+    }
+
+    const productObj = {
+      title,
+      description,
+      code,
+      price,
+      stock,
+      category,
+      thumbnails,
+    };
+
+    const addedProduct = await productManager.addProduct(productObj);
+
+    if (!addedProduct) {
+      return res.status(400).send({
+        status: "error",
+        error: "Product couldn't be added.",
+      });
+    }
+
+    res.status(201).send({ status: "Success", payload: addedProduct });
+  } catch (error) {
+    console.log(error);
   }
-
-  product.thumbnails = [];
-
-  if (files) {
-    files.forEach((file) => {
-      const imageUrl = `http://localhost:8080/images/${file.filename}`;
-      product.thumbnails.push(imageUrl);
-    });
-  }
-
-  await manager.addProduct(product);
-  return res.send({ status: "OK", message: "Product successfully added" });
 });
+
+/////////////////////////
+///////PUT METHOD////////
+/////////////////////////
 
 router.put("/:pid", async (req, res) => {
-  const productId = req.params.pid;
-  const changes = req.body;
+  try {
+    const updateProd = req.body;
+    const updateId = req.params.pid;
 
-  const updatedProduct = await manager.updateProduct(+productId, changes);
+    if (!updateProd || !updateId) {
+      return res.status(400).send({
+        status: "error",
+        error: "Incomplete values",
+      });
+    }
 
-  if (!updatedProduct) {
-    return res
-      .status(404)
-      .send({ status: "Error", error: "product was not found" });
+    const updatedProduct = await productManager.updateProduct(
+      updateId,
+      updateProd
+    );
+
+    return res.status(200).send({
+      status: "success",
+      payload: updatedProduct,
+    });
+  } catch (error) {
+    console.log(`Cannot update product with mongoose ${error}`);
   }
-  return res.send({
-    status: "OK",
-    message: "Product succesfully updated",
-    product: updatedProduct,
-  });
 });
 
-router.delete("/:pid", async (req, res) => {
-  const productId = req.params.pid;
-  const deletedProduct = await manager.deleteProduct(+productId);
+/////////////////////////
+//////DELETE METHOD//////
+/////////////////////////
 
-  if (!deletedProduct) {
-    return res
-      .status(404)
-      .send({ status: "Error", error: "Product does not exist" });
+router.delete("/:pid", async (req, res) => {
+  try {
+    const deleteId = req.params.pid;
+
+    if (!deleteId) {
+      return res.status(400).send({
+        status: "error",
+        error: "Incomplete values",
+      });
+    }
+
+    let deletedProduct = await productManager.deleteProduct(deleteId);
+
+    if (deletedProduct.deletedCount === 0) {
+      return res.status(404).send({
+        status: "error",
+        error: `Could not delete product. No product found with ID ${deleteId} in the database`,
+      });
+    }
+
+    return res.status(200).send({
+      status: "success",
+      payload: deletedProduct,
+    });
+  } catch (error) {
+    console.log(`Cannot delete product with mongoose ${error}`);
   }
-  return res.send({ status: "OK", message: "Product deleted successfully" });
 });
 
 export default router;

@@ -1,17 +1,30 @@
 import fs from "fs";
-import __dirname from "../../utils.js";
+import { Blob } from "buffer";
+import socket from "../../socket.js";
 
 export default class ProductManager {
   constructor() {
-    this.path = `${__dirname}/files/Products.json`;
+    this.dir = "./files";
+    this.path = "./src/files/products.json";
   }
 
-  getProducts = async () => {
+  getProducts = async (logProducts) => {
     try {
+      if (!fs.existsSync(this.dir)) {
+        fs.mkdirSync(this.dir);
+      }
       if (fs.existsSync(this.path)) {
-        const productsString = await fs.promises.readFile(this.path, "utf-8");
-        const products = JSON.parse(productsString);
-        return products;
+        const productData = await fs.promises.readFile(this.path, "utf-8");
+        const size = new Blob([productData]).size;
+        if (size > 0) {
+          const parsedProducts = JSON.parse(productData);
+          if (logProducts === "log") {
+            console.table(parsedProducts);
+          }
+          return parsedProducts;
+        } else {
+          return [];
+        }
       } else {
         return [];
       }
@@ -20,78 +33,94 @@ export default class ProductManager {
     }
   };
 
+  getProductById = async (productId) => {
+    try {
+      const products = await this.getProducts();
+      const filteredProduct = products.filter(
+        (prod) => prod.id === parseInt(productId)
+      );
+      return filteredProduct;
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
   addProduct = async (product) => {
     try {
-      const products = await this.getProducts();
+      product.stock > 0
+        ? (product = { status: true, ...product })
+        : (product = { status: false, ...product });
 
-      product.id =
-        products.length === 0 ? 1 : products[products.length - 1].id + 1;
-
-      products.push(product);
-
-      await fs.promises.writeFile(
-        this.path,
-        JSON.stringify(products, null, "\t")
-      );
-      return product;
-    } catch (error) {
-      console.log(error);
-    }
-  };
-
-  getProductById = async (id) => {
-    try {
-      const products = await this.getProducts();
-      const product = products.find((product) => product.id === id);
-      if (!product) throw new Error("Product was not found");
-      return product;
-    } catch (error) {
-      console.log(error);
-    }
-  };
-
-  updateProduct = async (id, changes) => {
-    try {
-      const products = await this.getProducts();
-      const product = await this.getProductById(id);
-      const productIndex = products.findIndex((product) => product.id === id);
-
-      if (changes.id) {
-        throw new Error("Cannot modify id property");
+      if (product?.thumbnails[0]?.hasOwnProperty("fieldname")) {
+        const imgPaths = product.thumbnails.map(
+          (prod) => `images/${prod.filename}`
+        );
+        product.thumbnails = imgPaths;
       }
 
-      const updatedProduct = {
-        ...product,
-        ...changes,
-      };
-
-      products.splice(productIndex, 1, updatedProduct);
-
-      await fs.promises.writeFile(
-        this.path,
-        JSON.stringify(products, null, "\t")
+      const products = await this.getProducts();
+      const productIndex = await products.findIndex(
+        (prod) => prod.code === product.code
       );
-      return updatedProduct;
+
+      if (productIndex === -1) {
+        products.length === 0
+          ? (product = { id: 1, ...product })
+          : (product = {
+              id: products[products.length - 1].id + 1,
+              ...product,
+            });
+        products.push(product);
+        await fs.promises.writeFile(
+          this.path,
+          JSON.stringify(products, null, "\t")
+        );
+        socket.io.emit("product_add", product);
+        return product;
+      }
     } catch (error) {
       console.log(error);
     }
   };
 
-  deleteProduct = async (id) => {
+  updateProduct = async (productId, updates) => {
     try {
       const products = await this.getProducts();
-      const productIndex = products.findIndex((product) => product.id === id);
-
-      if (productIndex === -1)
-        throw new Error(`Error: Product with id ${id} does not exist.`);
-
-      products.splice(productIndex, 1);
-      await fs.promises.writeFile(
-        this.path,
-        JSON.stringify(products, null, "\t")
+      const productIdFound = products.findIndex(
+        (prod) => prod.id === parseInt(productId)
       );
 
-      return true;
+      if (productIdFound !== -1) {
+        const updatedProduct = { ...products[productIdFound], ...updates };
+        products[productIdFound] = updatedProduct;
+        await fs.promises.writeFile(
+          this.path,
+          JSON.stringify(products, null, "\t")
+        );
+      } else {
+        return productIdFound;
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  deleteProduct = async (productId) => {
+    try {
+      const products = await this.getProducts();
+      const productIdFound = products.findIndex(
+        (prod) => prod.id === parseInt(productId)
+      );
+      if (productIdFound !== -1) {
+        products.splice(productIdFound, 1);
+        await fs.promises.writeFile(
+          this.path,
+          JSON.stringify(products, null, "\t")
+        );
+        socket.io.emit("product_remove", productIdFound);
+      } else {
+        return productIdFound;
+      }
     } catch (error) {
       console.log(error);
     }

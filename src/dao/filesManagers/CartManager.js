@@ -1,20 +1,29 @@
 import fs from "fs";
-import ProductManager from "./ProductManager.js";
-import __dirname from "../../utils.js";
-
-const manager = new ProductManager();
+import { Blob } from "buffer";
 
 export default class CartManager {
   constructor() {
-    this.path = `${__dirname}/files/Carts.json`;
+    this.dir = "./files";
+    this.path = "./src/files/carts.json";
   }
 
-  getCarts = async () => {
+  getCarts = async (logCarts) => {
     try {
+      if (!fs.existsSync(this.dir)) {
+        fs.mkdirSync(this.dir);
+      }
       if (fs.existsSync(this.path)) {
-        const cartsString = await fs.promises.readFile(this.path, "utf-8");
-        const carts = JSON.parse(cartsString);
-        return carts;
+        const cartsData = await fs.promises.readFile(this.path, "utf-8");
+        const size = new Blob([cartsData]).size;
+        if (size > 0) {
+          const parsedCarts = JSON.parse(cartsData);
+          if (logCarts === "log") {
+            console.table(parsedCarts);
+          }
+          return parsedCarts;
+        } else {
+          return [];
+        }
       } else {
         return [];
       }
@@ -23,63 +32,67 @@ export default class CartManager {
     }
   };
 
-  getCartById = async (id) => {
+  getCartById = async (cartId) => {
     try {
       const carts = await this.getCarts();
-      const cart = carts.find((cart) => cart.id === id);
-      if (!cart) throw new Error("cart was not found");
-      return cart;
+      const filteredCart = await carts.filter(
+        (cart) => cart.id === parseInt(cartId)
+      );
+      return filteredCart;
     } catch (error) {
       console.log(error);
     }
   };
 
-  addCart = async (cart) => {
+  createCart = async () => {
     try {
-      const carts = await this.getCarts();
-      cart = {
-        id: carts.length === 0 ? 1 : carts[carts.length - 1].id + 1,
+      const newCart = {
+        id: 0,
         products: [],
       };
-      carts.push(cart);
+
+      const carts = await this.getCarts();
+
+      carts.length === 0
+        ? (newCart.id = 1)
+        : (newCart.id = carts[carts.length - 1].id + 1);
+
+      carts.push(newCart);
       await fs.promises.writeFile(this.path, JSON.stringify(carts, null, "\t"));
-      return cart;
     } catch (error) {
       console.log(error);
     }
   };
 
-  addProduct = async (cartId, productId, quantity) => {
+  addToCart = async (cartId, productId) => {
     try {
-      const carts = await this.getCarts();
-      const cartIndex = carts.findIndex((cart) => cart.id === cartId);
-      const cart = await this.getCartById(cartId);
-      const product = await manager.getProductById(productId);
-
-      if (!product || !cart) {
-        throw new Error();
-      }
-      const { products } = cart;
-
-      const productIndex = products.findIndex(
-        (product) => product.productId === productId
-      );
-
-      const cartProduct = {
-        productId,
-        quantity,
+      const productToAdd = {
+        id: parseInt(productId),
+        quantity: 1,
       };
 
-      if (productIndex === -1) {
-        products.push(cartProduct);
+      const carts = await this.getCarts();
+
+      const cartIdFound = carts.findIndex(
+        (cart) => cart.id === parseInt(cartId)
+      );
+      const productIdFound = carts[cartIdFound].products.findIndex(
+        (prod) => prod.id === parseInt(productId)
+      );
+
+      if (cartIdFound !== -1) {
+        if (productIdFound !== -1) {
+          carts[cartIdFound].products[productIdFound].quantity++;
+        } else {
+          carts[cartIdFound].products.push(productToAdd);
+        }
+        await fs.promises.writeFile(
+          this.path,
+          JSON.stringify(carts, null, "\t")
+        );
       } else {
-        products[productIndex].quantity += quantity;
+        throw new Error(`Add: Cart with ID ${cartId} was not found`);
       }
-
-      carts.splice(cartIndex, 1, cart);
-
-      await fs.promises.writeFile(this.path, JSON.stringify(carts, null, "\t"));
-      return cart;
     } catch (error) {
       console.log(error);
     }
